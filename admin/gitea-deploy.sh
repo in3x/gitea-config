@@ -1,12 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Parse command-line flags early for root execution override
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 ALLOW_ROOT=false
-for arg in "$@"; do
-    case "$arg" in
+QUIET_MODE=true
+TARGET_SITE=""
+
+# Parse command-line options
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --allow-root)
             ALLOW_ROOT=true
+            shift
+            ;;
+        -q|--quiet)
+            QUIET_MODE=true
+            shift
+            ;;
+        -v|--verbose)
+            QUIET_MODE=false
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $(basename "$0") [SITE] [OPTIONS]"
+            echo ""
+            echo "Stage 2 Deployment: Deploys site configuration and binaries to system targets."
+            echo ""
+            echo "Options:"
+            echo "  SITE             Site profile name from site-conf/ (prompts menu if omitted)"
+            echo "  -v, --verbose    Show unified diffs for mismatches"
+            echo "  -q, --quiet      Suppress informational stdout"
+            echo "      --allow-root Allow running directly as root without sudo"
+            echo "  -h, --help       Show this help message"
+            exit 0
+            ;;
+        -*)
+            echo "[-] Error: Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "$TARGET_SITE" ]]; then
+                TARGET_SITE="$1"
+            fi
+            shift
             ;;
     esac
 done
@@ -18,7 +56,7 @@ if [[ -n "${SUDO_USER:-}" ]]; then
 elif [[ $EUID -eq 0 ]]; then
     if [[ "$ALLOW_ROOT" == false ]]; then
         echo "[SAFETY ABORT] Running directly as root is disabled by default." >&2
-        echo "               If running via sudo, $HOME will resolve automatically." >&2
+        echo "               If running via sudo, \$HOME will resolve automatically." >&2
         echo "               To force execution as pure root, re-run with: $0 --allow-root" >&2
         logger -t deploy-gitea -p "user.err" "[SAFETY ABORT] Blocked direct root execution without --allow-root" 2>/dev/null || true
         exit 1
@@ -30,8 +68,38 @@ else
     REAL_HOME="$HOME"
 fi
 
-# Set context source directory using the resolved real home path
-SRC_DIR="${REAL_HOME}/Projects/gitea-config"
+# Deterministic site selection (CLI argument or interactive menu)
+resolve_site() {
+    local target_site="${1:-}"
+    if [[ -n "$target_site" ]]; then
+        if [[ ! -d "$REPO_ROOT/site-conf/$target_site" ]]; then
+            echo "[-] Error: Site profile 'site-conf/$target_site' does not exist." >&2
+            exit 1
+        fi
+        echo "$target_site"
+        return
+    fi
+
+    local sites=($(find "$REPO_ROOT/site-conf" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
+    if [[ ${#sites[@]} -eq 0 ]]; then
+        echo "[-] Error: No site profiles found in site-conf/. Run admin/site-profile.sh first." >&2
+        exit 1
+    fi
+
+    echo "Select a site profile to deploy:" >&2
+    for i in "${!sites[@]}"; do
+        echo "  $((i+1))) ${sites[$i]}" >&2
+    done
+    read -rp "Selection [1-${#sites[@]}]: " choice
+    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#sites[@]} )); then
+        echo "[-] Invalid selection." >&2
+        exit 1
+    fi
+    echo "${sites[$((choice-1))]}"
+}
+
+SITE="$(resolve_site "$TARGET_SITE")"
+SITE_DIR="$REPO_ROOT/site-conf/$SITE"
 
 GITEA_USER="git"
 GITEA_GROUP="git"
@@ -40,29 +108,11 @@ TARGET_APP_INI="/etc/gitea/app.ini"
 TARGET_SERVICE="/etc/systemd/system/gitea.service"
 TARGET_BINARY="/opt/gitea/bin/gitea"
 
-DIST_DIR="$SRC_DIR/gitea-distribution"
+SOURCE_APP_INI="$SITE_DIR/app.ini"
+SOURCE_SERVICE="$REPO_ROOT/units/gitea.service"
+
+DIST_DIR="$REPO_ROOT/gitea-distribution"
 LOCAL_BINARY="$DIST_DIR/gitea"
-
-declare -A REQUIRED_FILES=(
-    ["gitea-app.ini"]="$TARGET_APP_INI"
-    ["gitea.service"]="$TARGET_SERVICE"
-)
-
-# Quiet mode state (-q / --quiet suppresses stdout; -v / --verbose enables stdout)
-QUIET_MODE=true
-
-for arg in "$@"; do
-    case $arg in
-        -q|--quiet)
-            QUIET_MODE=true
-            shift
-            ;;
-        -v|--verbose)
-            QUIET_MODE=false
-            shift
-            ;;
-    esac
-done
 
 NEEDS_SYSTEMD_RELOAD=false
 WAS_SERVICE_RUNNING=false
@@ -208,9 +258,6 @@ fetch_latest_gitea() {
     fi
 }
 
-# Ensure local distribution files are owned by the non-root calling user
-chown -R "$REAL_USER:$REAL_USER" "$DIST_DIR"
-
 prompt_and_apply_file() {
     local src="$1"
     local dst="$2"
@@ -278,16 +325,27 @@ prompt_and_apply_dir() {
 
 # --- EXECUTION FLOW ---
 
-log_msg "info" "Starting Gitea deployment check using context directory: $SRC_DIR"
+echo "===================================================================="
+echo " Gitea Deployment Target Configuration"
+echo "===================================================================="
+echo " Mode:          System (Root)"
+echo " Site Profile:  $SITE"
+echo " Source Config: $SOURCE_APP_INI"
+echo " Target Binary: $TARGET_BINARY"
+echo " Target Config: $TARGET_APP_INI"
+echo " Target Unit:   $TARGET_SERVICE"
+echo " Working Dir:   /var/lib/gitea"
+echo "===================================================================="
 
 # 1. Primary Safety Checks
-if [[ ! -d "$SRC_DIR" ]]; then
-    log_msg "err" "[SAFETY ABORT] Context directory does not exist: $SRC_DIR"
+if [[ ! -f "$SOURCE_APP_INI" ]]; then
+    log_msg "err" "[ABORT] Site profile config not found: $SOURCE_APP_INI"
+    echo "[-] Error: Run 'admin/site-profile.sh $SITE' to generate the profile first." >&2
     exit 1
 fi
 
-if [[ ! -f "$SRC_DIR/gitea-app.ini" ]]; then
-    log_msg "err" "[SAFETY ABORT] Anchor file 'gitea-app.ini' missing from $SRC_DIR"
+if [[ ! -f "$SOURCE_SERVICE" ]]; then
+    log_msg "err" "[ABORT] Unit file missing: $SOURCE_SERVICE"
     exit 1
 fi
 
@@ -296,19 +354,6 @@ if [[ $EUID -ne 0 ]]; then
         log_msg "err" "Sudo privileges required to check and deploy files."
         exit 1
     fi
-fi
-
-MISSING_FILES=0
-for src_file in "${!REQUIRED_FILES[@]}"; do
-    full_path="$SRC_DIR/$src_file"
-    if [[ ! -f "$full_path" ]]; then
-        log_msg "err" "Missing source file in context directory: $full_path"
-        ((MISSING_FILES++))
-    fi
-done
-if (( MISSING_FILES > 0 )); then
-    log_msg "err" "[ABORT] Missing required source files in $SRC_DIR."
-    exit 1
 fi
 
 if ! getent group "$GITEA_GROUP" >/dev/null 2>&1; then
@@ -322,14 +367,18 @@ if ! id -u "$GITEA_USER" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Ensure local distribution files are owned by the non-root calling user
+mkdir -p "$DIST_DIR"
+chown -R "$REAL_USER:$REAL_USER" "$DIST_DIR" 2>/dev/null || true
+
 # 2. Fetch / Download latest release binary
 fetch_latest_gitea
 
 # 3. Inspect target state against source files
-log_msg "info" "Inspecting target state against $SRC_DIR source files..."
+log_msg "info" "Inspecting target state against $SITE_DIR source files..."
 
-APP_INI_STATUS=$(check_file_status "$SRC_DIR/gitea-app.ini" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640")
-SERVICE_STATUS=$(check_file_status "$SRC_DIR/gitea.service" "$TARGET_SERVICE" "root:root" "644")
+APP_INI_STATUS=$(check_file_status "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640")
+SERVICE_STATUS=$(check_file_status "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644")
 DIR_ETC_STATUS=$(check_dir_status "/etc/gitea" "root:$GITEA_GROUP" "770")
 DIR_VAR_STATUS=$(check_dir_status "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750")
 BINARY_STATUS=$(check_binary_status "$LOCAL_BINARY" "$TARGET_BINARY")
@@ -356,8 +405,8 @@ fi
 prompt_and_apply_dir "/etc/gitea" "root:$GITEA_GROUP" "770" "$DIR_ETC_STATUS"
 prompt_and_apply_dir "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750" "$DIR_VAR_STATUS"
 
-prompt_and_apply_file "$SRC_DIR/gitea-app.ini" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640" "$APP_INI_STATUS"
-prompt_and_apply_file "$SRC_DIR/gitea.service" "$TARGET_SERVICE" "root:root" "644" "$SERVICE_STATUS"
+prompt_and_apply_file "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640" "$APP_INI_STATUS"
+prompt_and_apply_file "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644" "$SERVICE_STATUS"
 
 # 6. Apply binary update if required
 if [[ "$BINARY_STATUS" != "OK" && "$BINARY_STATUS" != "NO_LOCAL_BINARY" ]]; then

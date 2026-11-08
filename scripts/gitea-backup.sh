@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Configuration
 BACKUP_DIR="/var/backups/gitea"
 RETENTION_DAYS=14
@@ -45,7 +48,7 @@ mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
 if [[ ! -x "$GITEA_BIN" ]]; then
-    error_exit "Gitea binary not found or not executable at $GITEAr_BIN."
+    error_exit "Gitea binary not found or not executable at $GITEA_BIN."
 fi
 
 # Create work directory as user 'git' so permissions match the dump process

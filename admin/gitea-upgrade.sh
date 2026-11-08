@@ -6,8 +6,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 GITEA_BIN="/opt/gitea/bin/gitea"
 BACKUP_SCRIPT="/usr/local/bin/gitea-backup.sh"
+
+# Fall back to local repository backup script if /usr/local/bin copy is not installed
+if [[ ! -x "$BACKUP_SCRIPT" && -x "$REPO_ROOT/scripts/gitea-backup.sh" ]]; then
+    BACKUP_SCRIPT="$REPO_ROOT/scripts/gitea-backup.sh"
+fi
 
 # Ensure script is run as root
 if [[ $EUID -ne 0 ]]; then

@@ -1,0 +1,6 @@
+# Ignore all site-specific configuration directories, inventories, keys, and artifacts.
+# This prevents client/internal infrastructure details from ever being committed to version control.
+*
+
+# Preserve this .gitignore file in version control
+!.gitignore

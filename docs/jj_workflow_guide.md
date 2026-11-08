@@ -20,7 +20,7 @@ A complete, step-by-step practical reference for managing code repositories with
 | **Push Bookmark**     | `jj git push --remote origin --bookmark main`             | Pushes local bookmark to remote                 |
 | **Push New Bookmark** | `jj git push --remote origin --bookmark main --allow-new` | First push of a brand-new remote bookmark       |
 | **Fetch Remote**      | `jj git fetch --remote origin`                            | Synchronizes remote tracking pointers           |
-
+| **Clone Remote**      | `jj git clone <url>`                                      | Clone from remote git repo into greenfield space|
 ---
 
 ## 2. Fundamental Concepts & Terminology

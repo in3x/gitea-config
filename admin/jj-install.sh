@@ -6,11 +6,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 REPO="jj-vcs/jj"
 SPECIFIED_VERSION=""
 FORCE=false
 CUSTOM_DIR=""
 INSTALL_MODE=""
+SETUP_BASHRC=false
 
 show_help() {
     cat <<EOF
@@ -24,6 +28,7 @@ Options:
       --user            Install to ~/.local/bin (default for non-root).
       --system          Install to /usr/local/bin (default for root).
   -f, --force           Force reinstall even if current version is up to date.
+      --setup-bashrc    Force check and prompt for ~/.bashrc.d modular drop-in setup.
   -h, --help            Show this help message.
 
 EOF
@@ -52,6 +57,10 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
+        --setup-bashrc)
+            SETUP_BASHRC=true
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -72,6 +81,74 @@ log() {
 error_exit() {
     echo "[-] Error: $*" >&2
     exit 1
+}
+
+ensure_bashrc_d_dropin() {
+    local project_name="$1"
+    local bin_dir="$2"
+    local force="${3:-false}"
+    local bashrc_d="${HOME}/.bashrc.d"
+    local dropin_file="${bashrc_d}/${project_name}.bash"
+
+    if [[ "$force" == false && ":$PATH:" == *":$bin_dir:"* ]]; then
+        return 0
+    fi
+
+    mkdir -p "$bashrc_d"
+
+    # 1. Create the application drop-in file
+    cat <<EOF > "$dropin_file"
+# PATH configuration for ${project_name}
+if [[ ":\$PATH:" != *":${bin_dir}:"* ]]; then
+    export PATH="${bin_dir}:\$PATH"
+fi
+EOF
+    echo "[+] Created drop-in: $dropin_file"
+
+    # 2. Check if ~/.bashrc already loads ~/.bashrc.d
+    if [[ -f "${HOME}/.bashrc" ]] && ! grep -q '\.bashrc\.d' "${HOME}/.bashrc"; then
+        cat <<EOF
+
+====================================================================
+ [NOTICE] Enable modular ~/.bashrc.d configuration directory?
+====================================================================
+ Why:     ${bin_dir} needs to be in your PATH to run ${project_name}.
+ Benefit: ~/.bashrc.d allows tools to add PATH & environment settings
+          in separate, clean drop-in files without ever modifying
+          your main ~/.bashrc again.
+ Proposed addition to ~/.bashrc:
+
+   # Source ~/.bashrc.d drop-ins
+   if [ -d ~/.bashrc.d ]; then
+       for rc in ~/.bashrc.d/*; do
+           [ -f "\$rc" ] && . "\$rc"
+       done
+       unset rc
+   fi
+====================================================================
+EOF
+        read -rp "Append this loader block to ~/.bashrc now? [y/N]: " confirm_bashrc
+        if [[ "$confirm_bashrc" =~ ^[Yy]$ ]]; then
+            cat <<'EOF' >> "${HOME}/.bashrc"
+
+# Source ~/.bashrc.d drop-ins
+if [ -d ~/.bashrc.d ]; then
+    for rc in ~/.bashrc.d/*; do
+        [ -f "$rc" ] && . "$rc"
+    done
+    unset rc
+fi
+EOF
+            echo "[+] Updated ~/.bashrc successfully."
+            echo "[!] Run 'source ~/.bashrc' or open a new terminal to update your PATH."
+        else
+            echo "[-] Skipped updating ~/.bashrc. Left dotfiles unchanged."
+            echo "    To manually enable ${project_name}, add to your PATH:"
+            echo "      export PATH=\"${bin_dir}:\$PATH\""
+        fi
+    else
+        echo "[!] Drop-in active. Run 'source ~/.bashrc' to refresh PATH."
+    fi
 }
 
 # 1. Architecture detection
@@ -141,7 +218,11 @@ if [[ -x "$TARGET_BIN" ]] && [[ "$FORCE" == false ]]; then
     CURRENT_VER=$(echo "$CURRENT_RAW" | awk '{print $2}' | cut -d'-' -f1)
     if [[ "$CURRENT_VER" == "$TARGET_VER" ]]; then
         log "Jujutsu is already up to date ($CURRENT_RAW at $TARGET_BIN)."
-        log "Use --force to reinstall."
+        if [[ "$SETUP_BASHRC" == true ]]; then
+            ensure_bashrc_d_dropin "jj" "$TARGET_DIR" true
+        else
+            log "Use --force to reinstall, or --setup-bashrc to configure ~/.bashrc.d."
+        fi
         exit 0
     elif [[ -n "$CURRENT_VER" ]]; then
         log "Current installed version: $CURRENT_VER -> Target version: $TARGET_VER"
@@ -203,3 +284,8 @@ fi
 log "Jujutsu upgraded successfully!"
 "$TARGET_BIN" --version
 log "Binary installed at: $TARGET_BIN"
+
+# 8. Ensure target directory is available in PATH
+if [[ $EUID -ne 0 ]]; then
+    ensure_bashrc_d_dropin "jj" "$TARGET_DIR" "$SETUP_BASHRC"
+fi
