@@ -12,8 +12,6 @@ gitea-config/
 ├── admin/                         # Management & administrative scripts (run interactively via sudo)
 │   ├── gitea-deploy.sh            # Stage 2 deployment: syncs site-conf profile to system targets
 │   ├── gitea-upgrade.sh           # Binary upgrade script with pre-upgrade backup
-│   ├── jj-install.sh              # Jujutsu (jj) installer & updater with ~/.bashrc.d support
-│   ├── jj-update.sh -> jj-install.sh # Convenience symlink for updating jj
 │   └── site-profile.sh            # Stage 1 lifecycle: initializes/merges conf/ into site-conf/
 ├── scripts/                       # Operational scripts (run unattended via cron/systemd)
 │   └── gitea-backup.sh            # Automated backup script bundling gitea dump & /etc/gitea

@@ -10,10 +10,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 GITEA_BIN="/opt/gitea/bin/gitea"
-BACKUP_SCRIPT="/usr/local/bin/gitea-backup.sh"
+BACKUP_SCRIPT="/opt/gitea/bin/gitea-backup.sh"
 
-# Fall back to local repository backup script if /usr/local/bin copy is not installed
-if [[ ! -x "$BACKUP_SCRIPT" && -x "$REPO_ROOT/scripts/gitea-backup.sh" ]]; then
+# Fall back to alternative locations if /opt/gitea/bin copy is not installed
+if [[ ! -x "$BACKUP_SCRIPT" && -x "/usr/local/bin/gitea-backup.sh" ]]; then
+    BACKUP_SCRIPT="/usr/local/bin/gitea-backup.sh"
+elif [[ ! -x "$BACKUP_SCRIPT" && -x "$REPO_ROOT/scripts/gitea-backup.sh" ]]; then
     BACKUP_SCRIPT="$REPO_ROOT/scripts/gitea-backup.sh"
 fi
 
@@ -34,8 +36,9 @@ fi
 
 # 2. Fetch the latest release download URL via GitHub API (or specify a version tag)
 echo "[+] Fetching latest Gitea release details..."
+ARCH_ALIAS="$(detect_arch_alias 2>/dev/null || uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
 LATEST_URL=$(curl -s https://api.github.com/repos/go-gitea/gitea/releases/latest \
-    | grep -oE "https://[^\"]+linux-amd64\"" \
+    | grep -oE "https://[^\"]+linux-${ARCH_ALIAS}\"" \
     | grep -vE "\.(asc|sha256|xz|sigstore\.json)" \
     | tr -d '"' \
     | head -n 1)

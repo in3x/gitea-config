@@ -68,37 +68,42 @@ else
     REAL_HOME="$HOME"
 fi
 
-# Deterministic site selection (CLI argument or interactive menu)
-resolve_site() {
-    local target_site="${1:-}"
-    if [[ -n "$target_site" ]]; then
-        if [[ ! -d "$REPO_ROOT/site-conf/$target_site" ]]; then
-            echo "[-] Error: Site profile 'site-conf/$target_site' does not exist." >&2
-            exit 1
+# Load shared dev-bootstrap library for site selection & platform detection
+DEV_BOOTSTRAP_LIB="${HOME}/.local/lib/dev-bootstrap"
+if [[ -f "$DEV_BOOTSTRAP_LIB/lib-common.sh" ]]; then
+    source "$DEV_BOOTSTRAP_LIB/lib-common.sh"
+else
+    # Fallback inline definition if dev-bootstrap is missing
+    resolve_site() {
+        local target_site="${1:-}"
+        local site_conf_dir="${2:-$REPO_ROOT/site-conf}"
+        if [[ -n "$target_site" ]]; then
+            if [[ ! -d "$site_conf_dir/$target_site" ]]; then
+                echo "[-] Error: Site profile '$target_site' not found in $site_conf_dir." >&2
+                return 1
+            fi
+            echo "$target_site"
+            return 0
         fi
-        echo "$target_site"
-        return
-    fi
+        local sites=($(find "$site_conf_dir" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort))
+        if [[ ${#sites[@]} -eq 0 ]]; then
+            echo "[-] Error: No site profiles found in $site_conf_dir. Run admin/site-profile.sh first." >&2
+            return 1
+        fi
+        echo "Select a site profile to deploy:" >&2
+        for i in "${!sites[@]}"; do
+            echo "  $((i+1))) ${sites[$i]}" >&2
+        done
+        read -rp "Selection [1-${#sites[@]}]: " choice
+        if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#sites[@]} )); then
+            echo "[-] Error: Invalid selection." >&2
+            return 1
+        fi
+        echo "${sites[$((choice-1))]}"
+    }
+fi
 
-    local sites=($(find "$REPO_ROOT/site-conf" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
-    if [[ ${#sites[@]} -eq 0 ]]; then
-        echo "[-] Error: No site profiles found in site-conf/. Run admin/site-profile.sh first." >&2
-        exit 1
-    fi
-
-    echo "Select a site profile to deploy:" >&2
-    for i in "${!sites[@]}"; do
-        echo "  $((i+1))) ${sites[$i]}" >&2
-    done
-    read -rp "Selection [1-${#sites[@]}]: " choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#sites[@]} )); then
-        echo "[-] Invalid selection." >&2
-        exit 1
-    fi
-    echo "${sites[$((choice-1))]}"
-}
-
-SITE="$(resolve_site "$TARGET_SITE")"
+SITE="$(resolve_site "$TARGET_SITE" "$REPO_ROOT/site-conf")"
 SITE_DIR="$REPO_ROOT/site-conf/$SITE"
 
 GITEA_USER="git"
@@ -107,9 +112,11 @@ GITEA_GROUP="git"
 TARGET_APP_INI="/etc/gitea/app.ini"
 TARGET_SERVICE="/etc/systemd/system/gitea.service"
 TARGET_BINARY="/opt/gitea/bin/gitea"
+TARGET_BACKUP="/opt/gitea/bin/gitea-backup.sh"
 
 SOURCE_APP_INI="$SITE_DIR/app.ini"
 SOURCE_SERVICE="$REPO_ROOT/units/gitea.service"
+SOURCE_BACKUP="$REPO_ROOT/scripts/gitea-backup.sh"
 
 DIST_DIR="$REPO_ROOT/gitea-distribution"
 LOCAL_BINARY="$DIST_DIR/gitea"
@@ -231,7 +238,8 @@ fetch_latest_gitea() {
     fi
     
     VERSION="${LATEST_TAG#v}"
-    TARGET_FILENAME="gitea-${VERSION}-linux-amd64"
+    ARCH_ALIAS="$(detect_arch_alias 2>/dev/null || uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
+    TARGET_FILENAME="gitea-${VERSION}-linux-${ARCH_ALIAS}"
     DOWNLOAD_URL="https://dl.gitea.com/gitea/${VERSION}/${TARGET_FILENAME}"
     DEST_FILE="$DIST_DIR/$TARGET_FILENAME"
     
@@ -332,6 +340,7 @@ echo " Mode:          System (Root)"
 echo " Site Profile:  $SITE"
 echo " Source Config: $SOURCE_APP_INI"
 echo " Target Binary: $TARGET_BINARY"
+echo " Target Backup: $TARGET_BACKUP"
 echo " Target Config: $TARGET_APP_INI"
 echo " Target Unit:   $TARGET_SERVICE"
 echo " Working Dir:   /var/lib/gitea"
@@ -346,6 +355,11 @@ fi
 
 if [[ ! -f "$SOURCE_SERVICE" ]]; then
     log_msg "err" "[ABORT] Unit file missing: $SOURCE_SERVICE"
+    exit 1
+fi
+
+if [[ ! -f "$SOURCE_BACKUP" ]]; then
+    log_msg "err" "[ABORT] Backup script missing: $SOURCE_BACKUP"
     exit 1
 fi
 
@@ -379,11 +393,12 @@ log_msg "info" "Inspecting target state against $SITE_DIR source files..."
 
 APP_INI_STATUS=$(check_file_status "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640")
 SERVICE_STATUS=$(check_file_status "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644")
+BACKUP_STATUS=$(check_file_status "$SOURCE_BACKUP" "$TARGET_BACKUP" "root:root" "750")
 DIR_ETC_STATUS=$(check_dir_status "/etc/gitea" "root:$GITEA_GROUP" "770")
 DIR_VAR_STATUS=$(check_dir_status "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750")
 BINARY_STATUS=$(check_binary_status "$LOCAL_BINARY" "$TARGET_BINARY")
 
-if [[ "$APP_INI_STATUS" == "OK" && "$SERVICE_STATUS" == "OK" && "$DIR_ETC_STATUS" == "OK" && "$DIR_VAR_STATUS" == "OK" && "$BINARY_STATUS" == "OK" ]]; then
+if [[ "$APP_INI_STATUS" == "OK" && "$SERVICE_STATUS" == "OK" && "$BACKUP_STATUS" == "OK" && "$DIR_ETC_STATUS" == "OK" && "$DIR_VAR_STATUS" == "OK" && "$BINARY_STATUS" == "OK" ]]; then
     log_msg "info" "All target files, binaries, and directories are up to date with correct permissions. No changes required."
     exit 0
 fi
@@ -407,6 +422,7 @@ prompt_and_apply_dir "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750" "$DIR_VAR
 
 prompt_and_apply_file "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640" "$APP_INI_STATUS"
 prompt_and_apply_file "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644" "$SERVICE_STATUS"
+prompt_and_apply_file "$SOURCE_BACKUP" "$TARGET_BACKUP" "root:root" "750" "$BACKUP_STATUS"
 
 # 6. Apply binary update if required
 if [[ "$BINARY_STATUS" != "OK" && "$BINARY_STATUS" != "NO_LOCAL_BINARY" ]]; then

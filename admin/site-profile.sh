@@ -19,43 +19,46 @@ fi
 
 mkdir -p "$SITE_CONF_DIR"
 
-# Deterministic site selection (CLI argument or interactive menu)
-resolve_or_create_site() {
-    local target_site="${1:-}"
-    if [[ -n "$target_site" ]]; then
-        echo "$target_site"
-        return
-    fi
-
-    local sites=($(find "$SITE_CONF_DIR" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
-    
-    echo "Select a site profile to manage:" >&2
-    local count=0
-    for i in "${!sites[@]}"; do
-        echo "  $((i+1))) ${sites[$i]}" >&2
-        count=$((i+1))
-    done
-    echo "  $((count+1))) [Create new profile]" >&2
-
-    read -rp "Selection [1-$((count+1))]: " choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > count + 1 )); then
-        echo "[-] Invalid selection." >&2
-        exit 1
-    fi
-
-    if (( choice == count + 1 )); then
-        read -rp "Enter new site profile ID (e.g., lake, prod-east, lab): " new_id
-        if [[ -z "$new_id" || ! "$new_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "[-] Error: Invalid site ID '$new_id'. Use alphanumeric, hyphen, or underscore." >&2
+# Load shared dev-bootstrap library for site resolution
+DEV_BOOTSTRAP_LIB="${HOME}/.local/lib/dev-bootstrap"
+if [[ -f "$DEV_BOOTSTRAP_LIB/lib-site.sh" ]]; then
+    source "$DEV_BOOTSTRAP_LIB/lib-site.sh"
+else
+    # Fallback inline definition if dev-bootstrap is missing
+    resolve_or_create_site() {
+        local target_site="${1:-}"
+        local site_conf_dir="${2:-$SITE_CONF_DIR}"
+        if [[ -n "$target_site" ]]; then
+            echo "$target_site"
+            return
+        fi
+        local sites=($(find "$site_conf_dir" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort))
+        echo "Select a site profile to manage:" >&2
+        local count=0
+        for i in "${!sites[@]}"; do
+            echo "  $((i+1))) ${sites[$i]}" >&2
+            count=$((i+1))
+        done
+        echo "  $((count+1))) [Create new profile]" >&2
+        read -rp "Selection [1-$((count+1))]: " choice
+        if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > count + 1 )); then
+            echo "[-] Error: Invalid selection." >&2
             exit 1
         fi
-        echo "$new_id"
-    else
-        echo "${sites[$((choice-1))]}"
-    fi
-}
+        if (( choice == count + 1 )); then
+            read -rp "Enter new site profile ID (e.g., lake, prod-east, lab): " new_id
+            if [[ -z "$new_id" || ! "$new_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo "[-] Error: Invalid site ID '$new_id'. Use alphanumeric, hyphen, or underscore." >&2
+                exit 1
+            fi
+            echo "$new_id"
+        else
+            echo "${sites[$((choice-1))]}"
+        fi
+    }
+fi
 
-TARGET_SITE="$(resolve_or_create_site "${1:-}")"
+TARGET_SITE="$(resolve_or_create_site "${1:-}" "$SITE_CONF_DIR")"
 TARGET_DIR="$SITE_CONF_DIR/$TARGET_SITE"
 TARGET_CONFIG="$TARGET_DIR/app.ini"
 
