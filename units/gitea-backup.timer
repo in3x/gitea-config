@@ -1,0 +1,12 @@
+[Unit]
+Description=Gitea Automated Backup Timer
+Documentation=https://docs.gitea.com/administration/backup-and-restore
+
+[Timer]
+# Default schedule: Daily at 02:00 AM (override via `systemctl edit gitea-backup.timer`)
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

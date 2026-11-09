@@ -111,11 +111,15 @@ GITEA_GROUP="git"
 
 TARGET_APP_INI="/etc/gitea/app.ini"
 TARGET_SERVICE="/etc/systemd/system/gitea.service"
+TARGET_BACKUP_SERVICE="/etc/systemd/system/gitea-backup.service"
+TARGET_BACKUP_TIMER="/etc/systemd/system/gitea-backup.timer"
 TARGET_BINARY="/opt/gitea/bin/gitea"
 TARGET_BACKUP="/opt/gitea/bin/gitea-backup.sh"
 
 SOURCE_APP_INI="$SITE_DIR/app.ini"
 SOURCE_SERVICE="$REPO_ROOT/units/gitea.service"
+SOURCE_BACKUP_SERVICE="$REPO_ROOT/units/gitea-backup.service"
+SOURCE_BACKUP_TIMER="$REPO_ROOT/units/gitea-backup.timer"
 SOURCE_BACKUP="$REPO_ROOT/scripts/gitea-backup.sh"
 
 DIST_DIR="$REPO_ROOT/gitea-distribution"
@@ -363,6 +367,11 @@ if [[ ! -f "$SOURCE_BACKUP" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$SOURCE_BACKUP_SERVICE" || ! -f "$SOURCE_BACKUP_TIMER" ]]; then
+    log_msg "err" "[ABORT] Backup systemd units missing from units/"
+    exit 1
+fi
+
 if [[ $EUID -ne 0 ]]; then
     if ! sudo -v; then
         log_msg "err" "Sudo privileges required to check and deploy files."
@@ -393,12 +402,14 @@ log_msg "info" "Inspecting target state against $SITE_DIR source files..."
 
 APP_INI_STATUS=$(check_file_status "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640")
 SERVICE_STATUS=$(check_file_status "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644")
+BACKUP_SERVICE_STATUS=$(check_file_status "$SOURCE_BACKUP_SERVICE" "$TARGET_BACKUP_SERVICE" "root:root" "644")
+BACKUP_TIMER_STATUS=$(check_file_status "$SOURCE_BACKUP_TIMER" "$TARGET_BACKUP_TIMER" "root:root" "644")
 BACKUP_STATUS=$(check_file_status "$SOURCE_BACKUP" "$TARGET_BACKUP" "root:root" "750")
 DIR_ETC_STATUS=$(check_dir_status "/etc/gitea" "root:$GITEA_GROUP" "770")
 DIR_VAR_STATUS=$(check_dir_status "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750")
 BINARY_STATUS=$(check_binary_status "$LOCAL_BINARY" "$TARGET_BINARY")
 
-if [[ "$APP_INI_STATUS" == "OK" && "$SERVICE_STATUS" == "OK" && "$BACKUP_STATUS" == "OK" && "$DIR_ETC_STATUS" == "OK" && "$DIR_VAR_STATUS" == "OK" && "$BINARY_STATUS" == "OK" ]]; then
+if [[ "$APP_INI_STATUS" == "OK" && "$SERVICE_STATUS" == "OK" && "$BACKUP_SERVICE_STATUS" == "OK" && "$BACKUP_TIMER_STATUS" == "OK" && "$BACKUP_STATUS" == "OK" && "$DIR_ETC_STATUS" == "OK" && "$DIR_VAR_STATUS" == "OK" && "$BINARY_STATUS" == "OK" ]]; then
     log_msg "info" "All target files, binaries, and directories are up to date with correct permissions. No changes required."
     exit 0
 fi
@@ -422,6 +433,8 @@ prompt_and_apply_dir "/var/lib/gitea" "$GITEA_USER:$GITEA_GROUP" "750" "$DIR_VAR
 
 prompt_and_apply_file "$SOURCE_APP_INI" "$TARGET_APP_INI" "$GITEA_USER:$GITEA_GROUP" "640" "$APP_INI_STATUS"
 prompt_and_apply_file "$SOURCE_SERVICE" "$TARGET_SERVICE" "root:root" "644" "$SERVICE_STATUS"
+prompt_and_apply_file "$SOURCE_BACKUP_SERVICE" "$TARGET_BACKUP_SERVICE" "root:root" "644" "$BACKUP_SERVICE_STATUS"
+prompt_and_apply_file "$SOURCE_BACKUP_TIMER" "$TARGET_BACKUP_TIMER" "root:root" "644" "$BACKUP_TIMER_STATUS"
 prompt_and_apply_file "$SOURCE_BACKUP" "$TARGET_BACKUP" "root:root" "750" "$BACKUP_STATUS"
 
 # 6. Apply binary update if required

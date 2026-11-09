@@ -1,0 +1,14 @@
+[Unit]
+Description=Gitea Automated Backup
+Documentation=https://docs.gitea.com/administration/backup-and-restore
+After=network.target gitea.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/gitea/bin/gitea-backup.sh
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

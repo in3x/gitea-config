@@ -82,8 +82,10 @@ gitea-config/
 │   └── app.ini                    # Preserved
 ├── site-conf/
 │   └── lake/app.ini               # Preserved
-└── units/
-    └── gitea.service              # Preserved
+├── units/
+    │   ├── gitea.service              # Preserved
+    │   ├── gitea-backup.service       # Added: oneshot service executing /opt/gitea/bin/gitea-backup.sh
+    │   └── gitea-backup.timer         # Added: systemd timer (default: daily at 02:00 AM)
 ```
 
 ### Action Items:

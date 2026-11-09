@@ -22,7 +22,9 @@ gitea-config/
 │   └── lake/                      # Production profile for lake.dc.paradigm-works.com
 │       └── app.ini
 ├── units/                         # Systemd unit files
-│   └── gitea.service              # Systemd service unit for Gitea daemon
+│   ├── gitea.service              # Systemd service unit for Gitea daemon
+│   ├── gitea-backup.service       # Oneshot service executing gitea-backup.sh
+│   └── gitea-backup.timer         # Automated timer (default: daily at 02:00 AM)
 └── docs/                          # Architecture notes and operational guides
     └── jj_workflow_guide.md       # Jujutsu (jj) version control workflow guide
 ```
