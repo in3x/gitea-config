@@ -70,38 +70,13 @@ fi
 
 # Load shared dev-bootstrap library for site selection & platform detection
 DEV_BOOTSTRAP_LIB="${HOME}/.local/lib/dev-bootstrap"
-if [[ -f "$DEV_BOOTSTRAP_LIB/lib-common.sh" ]]; then
-    source "$DEV_BOOTSTRAP_LIB/lib-common.sh"
-else
-    # Fallback inline definition if dev-bootstrap is missing
-    resolve_site() {
-        local target_site="${1:-}"
-        local site_conf_dir="${2:-$REPO_ROOT/site-conf}"
-        if [[ -n "$target_site" ]]; then
-            if [[ ! -d "$site_conf_dir/$target_site" ]]; then
-                echo "[-] Error: Site profile '$target_site' not found in $site_conf_dir." >&2
-                return 1
-            fi
-            echo "$target_site"
-            return 0
-        fi
-        local sites=($(find "$site_conf_dir" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort))
-        if [[ ${#sites[@]} -eq 0 ]]; then
-            echo "[-] Error: No site profiles found in $site_conf_dir. Run admin/site-profile.sh first." >&2
-            return 1
-        fi
-        echo "Select a site profile to deploy:" >&2
-        for i in "${!sites[@]}"; do
-            echo "  $((i+1))) ${sites[$i]}" >&2
-        done
-        read -rp "Selection [1-${#sites[@]}]: " choice
-        if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#sites[@]} )); then
-            echo "[-] Error: Invalid selection." >&2
-            return 1
-        fi
-        echo "${sites[$((choice-1))]}"
-    }
+if [[ ! -f "$DEV_BOOTSTRAP_LIB/lib-common.sh" ]]; then
+    echo "[-] Error: Shared platform library not found at $DEV_BOOTSTRAP_LIB" >&2
+    echo "    Please run the host bootstrap to install it:" >&2
+    echo "      bash ~/Projects/zed-standards/admin/host-bootstrap.sh --lib-only" >&2
+    exit 1
 fi
+source "$DEV_BOOTSTRAP_LIB/lib-common.sh"
 
 SITE="$(resolve_site "$TARGET_SITE" "$REPO_ROOT/site-conf")"
 SITE_DIR="$REPO_ROOT/site-conf/$SITE"
